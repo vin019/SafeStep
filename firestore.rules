@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // GLOBAL REUSABLE HELPERS
+    // ==========================================
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Assumes your admin documents are saved using the Admin's UID as the document ID
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Validates essential fields for a new User profile document
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'name', 'email']) &&
+             data.id is string && 
+             data.email is string;
+    }
+
+    // Global Safety Net: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // DATA PATH RULES
+    // ==========================================
+
+    // 1. Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin(); 
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(request.resource.data);
+      allow update: if (isSignedIn() && request.auth.uid == userId) || isAdmin();
+    }
+
+    // 2. Hazards Collection
+    match /hazards/{hazardId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && 
+        request.resource.data.reporterId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['type', 'title', 'coords', 'reporterId', 'createdAt']);
+      
+      // Ensures users can only edit their own reports, and cannot change the reporterId to someone else
+      allow update: if isAdmin() || (
+        isSignedIn() && 
+        resource.data.reporterId == request.auth.uid && 
+        request.resource.data.reporterId == resource.data.reporterId
+      );
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.reporterId == request.auth.uid);
+    }
+
+    // 3. Collection Group Rules (required for collectionGroup queries and nested paths)
+    match /{path=**}/verifications/{vId} {
+      allow read: if isSignedIn();
+      // Enforces unique constraint: document path ID must match voter's authenticating UID
+      allow write: if isSignedIn() && request.auth.uid == vId;
+    }
+
+    match /{path=**}/comments/{commentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /{path=**}/media/{mediaId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // 4. Notification Logs
+    match /notification_logs/{logId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // 5. Admins Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && 
+                    (request.auth.token.email == 'bacsarsav@gmail.com' || 
+                     request.resource.data.email == 'bacsarsav@gmail.com');
+    }
+  }
+}

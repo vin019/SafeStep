@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ---------------------------------------------------------
+    // 1. DEFAULT DENY
+    // ---------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // 2. GLOBAL HELPERS
+    // ---------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // ---------------------------------------------------------
+    // 3. ENTITY VALIDATORS
+    // ---------------------------------------------------------
+    
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'reputation', 'avatar']) &&
+             data.keys().size() >= 5 && data.keys().size() <= 6 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.reputation is number &&
+             data.avatar is string && data.avatar.size() <= 1024;
+    }
+
+    function isValidHazard(data) {
+      return data.keys().hasAll(['type', 'title', 'description', 'location', 'coords', 'reporterId', 'createdAt']) &&
+             data.keys().size() == 7 &&
+             data.type in ['Safe', 'Hazard', 'Flooded', 'High-risk', 'Traffic'] &&
+             data.title is string && data.title.size() <= 200 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.location is string && data.location.size() <= 500 &&
+             data.coords is map && 
+             data.coords.keys().hasAll(['x', 'y']) &&
+             data.reporterId == request.auth.uid &&
+             data.createdAt == request.time;
+    }
+
+    // ---------------------------------------------------------
+    // 4. COLLECTION MATCHES
+    // ---------------------------------------------------------
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // In a bigger app, we might restrict this
+      
+      allow create: if isOwner(userId) && isValidUser(incoming()) && 
+                       !incoming().keys().contains('role');
+      
+      allow update: if isOwner(userId) && isValidUser(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'avatar', 'reputation']) &&
+                       incoming().id == existing().id &&
+                       incoming().email == existing().email;
+      
+      // Admin bypass for roles
+      allow update: if isAdmin() && isValidUser(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasAny(['role', 'reputation']);
+    }
+
+    match /hazards/{hazardId} {
+      allow read: if isSignedIn();
+      
+      allow create: if isSignedIn() && isValidId(hazardId) && isValidHazard(incoming());
+      
+      allow update: if (isAdmin() || (isSignedIn() && existing().reporterId == request.auth.uid)) &&
+                       isValidHazard(incoming()) &&
+                       incoming().reporterId == existing().reporterId &&
+                       incoming().createdAt == existing().createdAt;
+                       
+      allow delete: if isAdmin() || (isSignedIn() && existing().reporterId == request.auth.uid);
+    }
+
+    match /admins/{adminId} {
+      // Access to the admin list is restricted to admins themselves
+      allow read: if isAdmin();
+      // Bootstrapped via Firebase Console or special script, client cannot write
+      allow write: if false;
+    }
+    
+    // Testing path
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

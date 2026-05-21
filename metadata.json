@@ -1,0 +1,10 @@
+{
+  "name": "SafeStep",
+  "description": "SafeStep is a production-grade safety navigation platform. It utilizes real-time community reports and AI-optimized routing to ensure pedestrians find the most well-lit and secure paths to their destinations.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

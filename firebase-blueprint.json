@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information including reputation and roles.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "reputation": { "type": "number" },
+        "avatar": { "type": "string" },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Hazard": {
+      "title": "Hazard",
+      "description": "A safety-related report pinned by the community.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "coords": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "reporterId": { "type": "string" },
+        "reporterName": { "type": "string" },
+        "reporterAvatar": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "archived"] },
+        "verificationCount": { "type": "number" },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["type", "title", "coords", "reporterId", "status"]
+    },
+    "Verification": {
+      "title": "Verification",
+      "description": "A record of a user verifying a hazard's validity.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "hazardId": { "type": "string" },
+        "status": { "type": "string", "enum": ["valid", "invalid"] },
+        "timestamp": { "type": "object" }
+      },
+      "required": ["userId", "hazardId", "status"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A community comment on a hazard.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "hazardId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["hazardId", "userId", "content"]
+    },
+    "Media": {
+      "title": "Media",
+      "description": "Media attachments for hazards.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "hazardId": { "type": "string" },
+        "userId": { "type": "string" },
+        "url": { "type": "string" },
+        "type": { "type": "string", "enum": ["image", "video"] },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["hazardId", "userId", "url", "type"]
+    },
+    "NotificationLog": {
+      "title": "NotificationLog",
+      "description": "Logs of proximity alerts or navigation risks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "hazardId": { "type": "string" },
+        "type": { "type": "string", "enum": ["proximity_alert", "nav_risk"] },
+        "message": { "type": "string" },
+        "timestamp": { "type": "object" }
+      },
+      "required": ["userId", "type", "message"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "A list of user IDs with administrative privileges.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" }
+      },
+      "required": ["email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/hazards/{hazardId}": {
+      "schema": "Hazard",
+      "description": "Community reported hazards"
+    },
+    "/hazards/{hazardId}/verifications/{userId}": {
+      "schema": "Verification",
+      "description": "User verifications for a specific hazard"
+    },
+    "/hazards/{hazardId}/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "User comments on a specific hazard"
+    },
+    "/hazards/{hazardId}/media/{mediaId}": {
+      "schema": "Media",
+      "description": "Media attachments for a specific hazard"
+    },
+    "/notification_logs/{logId}": {
+      "schema": "NotificationLog",
+      "description": "System navigation and safety logs"
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Administrative access list"
+    }
+  }
+}
