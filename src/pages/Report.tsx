@@ -1,20 +1,100 @@
-import React, { useState, useEffect } from 'react';
-import { TopBar, BottomNav } from '../components/Navigation.tsx';
-import { ShieldCheck, AlertCircle, Droplets, Zap, X, MapPin, Send, ShieldAlert, Navigation, Info } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import {
+  ShieldCheck,
+  AlertCircle,
+  Droplets,
+  Zap,
+  X,
+  MapPin,
+  Send,
+  ShieldAlert,
+  Navigation,
+  Info,
+  Search,
+  Crosshair,
+  ChevronLeft
+} from 'lucide-react';
 import { useApp } from '../AppContext.tsx';
+import { TopBar, BottomNav } from '../components/Navigation.tsx';
+
+// --- STYLES INJECTION ---
+const usePingAnimation = () => {
+  useEffect(() => {
+    if (!document.getElementById('ss-styles')) {
+      const s = document.createElement('style');
+      s.id = 'ss-styles';
+      s.innerHTML = `@keyframes ping { 75%,100% { transform: scale(2); opacity: 0; } }`;
+      document.head.appendChild(s);
+    }
+  }, []);
+};
+
+// --- INLINE STYLE ICONS ---
+const createUserIcon = () => new L.DivIcon({
+  className: '',
+  html: `<div style="position:relative;width:24px;height:24px;">
+    <div style="position:absolute;inset:0;background:#3B82F6;border-radius:9999px;animation:ping 1s cubic-bezier(0,0,0.2,1) infinite;opacity:0.3;"></div>
+    <div style="width:24px;height:24px;background:white;border-radius:9999px;box-shadow:0 2px 8px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;border:2.5px solid #3B82F6;position:relative;">
+      <div style="width:10px;height:10px;background:#3B82F6;border-radius:9999px;"></div>
+    </div>
+  </div>`,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12]
+});
+
+const createHazardIcon = (type: string) => {
+  let color = '#3B82F6'; // Default (Blue)
+  if (type === 'Safe') color = '#10B981'; // Emerald
+  if (type === 'Hazard') color = '#F59E0B'; // Amber
+  if (type === 'Flooded') color = '#3B82F6'; // Blue
+  if (type === 'High-risk' || type === 'Traffic') color = '#E11D48'; // Rose
+
+  return new L.DivIcon({
+    className: '',
+    html: `<div style="width:32px;height:32px;background:white;border-radius:9999px;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;border:3px solid ${color};">
+      <div style="width:14px;height:14px;background:${color};border-radius:3px;transform:rotate(45deg);"></div>
+    </div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16]
+  });
+};
+
+// --- MAP SUB-COMPONENTS ---
+function MapEvents({ onMapClick }: { onMapClick: (e: L.LeafletMouseEvent) => void }) {
+  useMapEvents({ click: onMapClick });
+  return null;
+}
+
+function MapController({ center }: { center: [number, number] | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center) map.setView(center, 15);
+  }, [center, map]);
+  return null;
+}
 
 export default function Report() {
+  usePingAnimation();
   const navigate = useNavigate();
   const { addHazard, userPosition } = useApp();
+  const mapRef = useRef<L.Map | null>(null);
+
   const [step, setStep] = useState<'details' | 'location'>('details');
   const [selectedCategory, setSelectedCategory] = useState<'Safe' | 'Hazard' | 'Flooded' | 'High-risk' | 'Traffic'>('Hazard');
   const [description, setDescription] = useState('');
   const [pickedPosition, setPickedPosition] = useState<[number, number] | null>(null);
 
+  // Search state for map
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+
   useEffect(() => {
-    if (userPosition) {
+    if (userPosition && !pickedPosition) {
       setPickedPosition(userPosition);
     }
   }, [userPosition]);
@@ -37,150 +117,246 @@ export default function Report() {
     navigate('/map');
   };
 
+  const handleMapClick = (e: L.LeafletMouseEvent) => {
+    const lat = typeof e.latlng.lat === 'function' ? e.latlng.lat() : Number(e.latlng.lat);
+    const lng = typeof e.latlng.lng === 'function' ? e.latlng.lng() : Number(e.latlng.lng);
+    if (isNaN(lat) || isNaN(lng)) return;
+    setPickedPosition([lat, lng]);
+  };
+
+  const handlePlaceSelect = (place: any) => {
+    const lat = parseFloat(place.lat);
+    const lon = parseFloat(place.lon);
+    setPickedPosition([lat, lon]);
+    setSearchResults([]);
+    setSearchQuery(place.display_name);
+    if (mapRef.current) mapRef.current.setView([lat, lon], 16);
+  };
+
+  // Search debounce
+  useEffect(() => {
+    if (!searchQuery || searchQuery.length < 3 || step === 'details') {
+      setSearchResults([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=5`);
+        const data = await res.json();
+        setSearchResults(data);
+      } catch (err) {
+        console.error("Geocoding error:", err);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, step]);
+
   const categories = [
-    { id: 'Safe', icon: ShieldCheck, label: 'Safe Zone', sub: 'Verified Path', color: 'bg-tertiary-container text-tertiary' },
-    { id: 'Hazard', icon: AlertCircle, label: 'Physical Hazard', sub: 'Obstacles or Damage', color: 'bg-secondary-container text-white' },
-    { id: 'Traffic', icon: ShieldAlert, label: 'Traffic Safety', sub: 'Dangerous Crossing', color: 'bg-error/10 text-error' },
-    { id: 'Flooded', icon: Droplets, label: 'Flooding', sub: 'Water accumulation', color: 'bg-surface-container-low text-primary' },
-    { id: 'High-risk', icon: Zap, label: 'Major Incident', sub: 'Immediate Danger', color: 'bg-surface-container-low text-error' },
+    { id: 'Safe', icon: ShieldCheck, label: 'Safe Zone', sub: 'Verified Path', color: 'bg-emerald-50 text-emerald-600', dot: 'bg-emerald-500' },
+    { id: 'Hazard', icon: AlertCircle, label: 'Hazard', sub: 'Obstacles', color: 'bg-amber-50 text-amber-600', dot: 'bg-amber-500' },
+    { id: 'Traffic', icon: ShieldAlert, label: 'Traffic', sub: 'Heavy Flow', color: 'bg-rose-50 text-rose-600', dot: 'bg-rose-500' },
+    { id: 'Flooded', icon: Droplets, label: 'Flooding', sub: 'Water accumulation', color: 'bg-blue-50 text-blue-600', dot: 'bg-blue-500' },
+    { id: 'High-risk', icon: Zap, label: 'High Risk', sub: 'Danger', color: 'bg-rose-50 text-rose-600', dot: 'bg-rose-500' },
   ] as const;
 
   return (
-    <div className="bg-surface font-sans text-on-surface min-h-screen">
-      <TopBar />
+    <div className="bg-slate-50 font-sans text-slate-800 min-h-screen flex flex-col overflow-hidden">
+      <TopBar title={step === 'details' ? "Report Issue" : "Confirm Location"} showBack={step === 'location'} />
 
-      {/* Background Overlay */}
-      <div className="fixed inset-0 z-10 bg-on-surface/30 backdrop-blur-md" />
-
-      <div className="fixed inset-0 z-20 flex items-center justify-center">
+      <div className="flex-1 relative">
+        <AnimatePresence mode="wait">
           {step === 'details' ? (
-              <motion.div
-                  initial={{ scale: 0.95, opacity: 0, y: 20 }}
-                  animate={{ scale: 1, opacity: 1, y: 0 }}
-                  className="w-full max-w-xl bg-white rounded-[2.5rem] shadow-[0_32px_64px_rgba(0,0,0,0.2)] overflow-hidden flex flex-col max-h-[90vh] mx-4"
-              >
-                  <div className="p-8 pb-4 flex justify-between items-start border-b border-outline-variant/10">
+            <motion.div
+              key="details"
+              initial={{ x: -20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -20, opacity: 0 }}
+              className="absolute inset-0 z-10 flex flex-col p-6 overflow-y-auto pb-32"
+            >
+              <div className="bg-white rounded-[2.5rem] shadow-xl p-8 border border-slate-100 mb-6">
+                <h2 className="text-2xl font-black text-slate-800 mb-2 tracking-tight">Report Hazard</h2>
+                <p className="text-slate-500 font-medium mb-8">What kind of safety update are you sharing?</p>
+
+                <div className="grid grid-cols-2 gap-3 mb-10">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setSelectedCategory(cat.id)}
+                      className={`
+                        flex flex-col items-start p-4 rounded-3xl transition-all border-2 text-left relative overflow-hidden group
+                        ${selectedCategory === cat.id
+                          ? 'border-slate-800 bg-slate-800 text-white shadow-lg'
+                          : 'border-slate-100 bg-white hover:border-slate-200'}
+                      `}
+                    >
+                      <cat.icon className={`w-6 h-6 mb-3 ${selectedCategory === cat.id ? 'text-white' : 'text-slate-400'}`} />
                       <div>
-                          <h2 className="font-display font-black text-3xl tracking-tight text-on-surface">Report Hazard</h2>
-                          <p className="text-on-surface-variant font-medium mt-1">What kind of safety update are you sharing?</p>
+                        <span className="font-bold text-sm block leading-tight">{cat.label}</span>
+                        <span className={`text-[10px] uppercase font-bold mt-1 tracking-wider block ${selectedCategory === cat.id ? 'opacity-60' : 'text-slate-400'}`}>
+                          {cat.sub}
+                        </span>
                       </div>
-                      <button
-                          onClick={() => navigate('/map')}
-                          className="p-3 hover:bg-surface-container-high rounded-full transition-all active:scale-90"
-                      >
-                          <X className="w-6 h-6 text-outline" />
-                      </button>
-                  </div>
+                    </button>
+                  ))}
+                </div>
 
-                  <div className="flex-1 overflow-y-auto px-8 pt-6 space-y-8 scrollbar-hide">
-                      <section>
-                          <label className="font-display font-black text-[11px] uppercase tracking-[0.25em] text-on-surface-variant mb-4 block">1. Select Information Type</label>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              {categories.map((cat) => (
-                                  <button
-                                      key={cat.id}
-                                      onClick={() => setSelectedCategory(cat.id)}
-                                      className={`
-                                          flex flex-col items-start p-4 rounded-3xl transition-all border-2 text-left relative overflow-hidden group
-                                          ${selectedCategory === cat.id
-                                              ? 'border-primary ring-4 ring-primary/10 shadow-lg ' + cat.color
-                                              : 'border-outline-variant/20 bg-surface hover:border-primary/40'}
-                                      `}
-                                  >
-                                      <cat.icon className={`w-7 h-7 mb-3 ${selectedCategory === cat.id ? 'fill-current opacity-90' : 'text-on-surface-variant'}`} />
-                                      <div className="relative z-10">
-                                          <span className="font-black text-sm block leading-tight">{cat.label}</span>
-                                          <span className="text-[10px] uppercase font-black mt-1 opacity-60 tracking-wider block">{cat.sub}</span>
-                                      </div>
-                                  </button>
-                              ))}
-                          </div>
-                      </section>
+                <div className="space-y-4">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-400 block ml-2">Context (Optional)</label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value.slice(0, 240))}
+                    className="w-full bg-slate-50 border-2 border-transparent focus:border-slate-200 rounded-3xl p-6 text-slate-700 placeholder:text-slate-300 font-sans focus:ring-4 focus:ring-slate-100 transition-all resize-none font-bold min-h-[140px]"
+                    placeholder="Provide details about the hazard..."
+                  />
+                  <div className="text-right text-[10px] font-bold text-slate-300 uppercase tracking-widest mr-2">{description.length}/240</div>
+                </div>
+              </div>
 
-                      <section className="pb-8">
-                          <label className="font-display font-black text-[11px] uppercase tracking-[0.25em] text-on-surface-variant mb-4 block">2. Add Context (Optional)</label>
-                          <div className="relative group">
-                              <textarea
-                                  value={description}
-                                  onChange={(e) => setDescription(e.target.value.slice(0, 240))}
-                                  className="w-full bg-surface-container-low border-2 border-transparent group-focus-within:border-primary/20 rounded-3xl p-6 text-on-surface placeholder:text-outline font-sans focus:ring-4 focus:ring-primary/10 transition-all resize-none font-bold min-h-[140px] shadow-inner"
-                                  placeholder="What should others know? e.g. 'Slippery patch near main entrance'..."
-                              />
-                              <div className="absolute bottom-4 right-6 text-[10px] font-black text-outline uppercase tracking-[0.2em] bg-white px-2 py-1 rounded-md">{description.length}/240</div>
-                          </div>
-                      </section>
-                  </div>
-
-                  <div className="px-8 pt-4 pb-12 bg-surface-container-lowest border-t border-outline-variant/10">
-                      <button
-                          onClick={() => setStep('location')}
-                          className="w-full h-14 rounded-3xl bg-primary text-white font-display font-black flex items-center justify-center gap-3 shadow-2xl shadow-primary/30 active:scale-[0.98] transition-all group overflow-hidden relative"
-                      >
-                          <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                          <span className="tracking-widest uppercase text-[11px]">Next: Confirm Location</span>
-                          <Send className="w-4 h-4 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                      </button>
-                  </div>
-              </motion.div>
-          ) : (
-              <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="fixed inset-0 z-30 bg-surface flex flex-col items-center justify-center p-6"
+              <button
+                onClick={() => setStep('location')}
+                className="w-full h-16 rounded-3xl bg-slate-900 text-white font-black flex items-center justify-center gap-3 shadow-2xl active:scale-95 transition-all"
               >
-                  <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 flex flex-col gap-8 border border-outline-variant/10">
-                    <div className="flex flex-col items-center text-center gap-4">
-                        <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center text-primary">
-                            <Navigation className="w-10 h-10 animate-pulse" />
-                        </div>
-                        <div>
-                            <h3 className="font-display font-black text-2xl tracking-tight text-on-surface">Confirm Location</h3>
-                            <p className="text-on-surface-variant font-medium mt-1">Using your current GPS coordinates</p>
-                        </div>
-                    </div>
+                <span className="tracking-widest uppercase text-xs">Confirm Location</span>
+                <Navigation size={18} />
+              </button>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="location"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              className="absolute inset-0 z-10 flex flex-col"
+            >
+              {/* --- MAP FOR PINNING --- */}
+              <div className="absolute inset-0 z-0">
+                <MapContainer
+                  center={pickedPosition || userPosition || [11.10, 125.00]}
+                  zoom={15}
+                  style={{ height: '100%', width: '100%' }}
+                  zoomControl={false}
+                  ref={mapRef}
+                >
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  <MapEvents onMapClick={handleMapClick} />
 
-                    <div className="bg-surface-container-low rounded-3xl p-6 border-2 border-outline-variant/10">
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center text-white shadow-lg">
-                                <MapPin size={20} />
-                            </div>
-                            <div className="text-left">
-                                <p className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant">Report Position</p>
-                                <p className="font-sans font-bold text-sm text-on-surface tabular-nums">
-                                    {pickedPosition ? `${pickedPosition[0].toFixed(6)}, ${pickedPosition[1].toFixed(6)}` : 'Detecting GPS...'}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="flex items-start gap-3 p-4 bg-primary/5 rounded-2xl border border-primary/10">
-                            <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                            <p className="text-[10px] font-bold text-primary/80 leading-relaxed uppercase tracking-wider">
-                                GPS coordinates are captured automatically for maximum accuracy.
-                            </p>
-                        </div>
-                    </div>
+                  {/* User Marker */}
+                  {userPosition && (
+                    <Marker position={userPosition} icon={createUserIcon()} />
+                  )}
 
-                    <div className="flex flex-col gap-4">
-                        <button 
-                            disabled={!pickedPosition}
-                            onClick={handleSave}
-                            className="w-full h-16 rounded-2xl bg-primary text-white font-display font-black flex items-center justify-center gap-4 shadow-2xl shadow-primary/30 active:scale-[0.98] transition-all group disabled:opacity-50 disabled:grayscale relative overflow-hidden"
-                        >
-                            <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            <span className="tracking-widest uppercase text-[13px]">Publish Report</span>
-                            <Send className="w-5 h-5 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                        </button>
+                  {/* Picked Position Marker (The Hazard Pin) */}
+                  {pickedPosition && (
+                    <Marker position={pickedPosition} icon={createHazardIcon(selectedCategory)} />
+                  )}
+                </MapContainer>
+              </div>
 
+              {/* --- SEARCH OVERLAY (Similar to MapView) --- */}
+              <div className="absolute top-4 left-4 right-4 z-[1001] flex flex-col gap-2">
+                <div className="relative flex items-center bg-white rounded-2xl shadow-xl border border-slate-100 p-1">
+                  <button
+                    onClick={() => setStep('details')}
+                    className="p-3 text-slate-400 hover:text-slate-600"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <input
+                    type="text"
+                    className="flex-1 py-3 text-slate-700 placeholder-slate-400 outline-none text-base font-medium"
+                    placeholder="Search for a location..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button onClick={() => setSearchQuery('')} className="p-3 text-slate-400">
+                      <X size={20} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Autocomplete Results */}
+                <AnimatePresence>
+                  {searchResults.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
+                    >
+                      {searchResults.map((res, i) => (
                         <button
-                            onClick={() => setStep('details')}
-                            className="w-full h-14 rounded-2xl bg-surface-container-high text-on-surface-variant font-display font-black flex items-center justify-center gap-3 active:scale-[0.98] transition-all"
+                          key={i}
+                          onClick={() => handlePlaceSelect(res)}
+                          className="w-full flex items-center gap-3 p-4 text-left border-b border-slate-50 last:border-0 active:bg-slate-50"
                         >
-                            <X className="w-4 h-4" />
-                            <span className="tracking-widest uppercase text-[11px]">Back to Details</span>
+                          <MapPin size={18} className="text-slate-400 shrink-0" />
+                          <span className="text-sm text-slate-600 truncate font-medium">{res.display_name}</span>
                         </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* --- MAP CONTROLS --- */}
+              <div className="absolute bottom-64 right-4 flex flex-col gap-3 z-[1001]">
+                <button
+                  onClick={() => {
+                    if (userPosition) {
+                      setPickedPosition(userPosition);
+                      mapRef.current?.setView(userPosition, 16);
+                    }
+                  }}
+                  className="bg-white text-slate-600 p-4 rounded-full shadow-xl border border-slate-100 active:scale-95 transition-transform"
+                >
+                  <Crosshair size={24} />
+                </button>
+              </div>
+
+              {/* --- CONFIRM CARD (Drawer-like) --- */}
+              <div className="absolute bottom-0 left-0 right-0 z-[1002] p-6 pb-28">
+                <div className="bg-white rounded-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.15)] p-8 border border-slate-100">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg ${
+                      categories.find(c => c.id === selectedCategory)?.dot || 'bg-slate-800'
+                    }`}>
+                      {React.createElement(categories.find(c => c.id === selectedCategory)?.icon || AlertCircle, { size: 24 })}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pinning Point</p>
+                      <p className="font-bold text-slate-800 truncate">
+                        {pickedPosition ? `${pickedPosition[0].toFixed(6)}, ${pickedPosition[1].toFixed(6)}` : 'Picking location...'}
+                      </p>
                     </div>
                   </div>
-              </motion.div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setStep('details')}
+                      className="flex-1 h-16 rounded-2xl bg-slate-50 text-slate-500 font-bold uppercase tracking-widest text-xs active:scale-95 transition-all"
+                    >
+                      Back
+                    </button>
+                    <button
+                      disabled={!pickedPosition}
+                      onClick={handleSave}
+                      className="flex-[2] h-16 rounded-2xl bg-emerald-600 text-white font-black flex items-center justify-center gap-4 shadow-xl shadow-emerald-500/20 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      <span className="tracking-widest uppercase text-xs">Publish Report</span>
+                      <Send size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           )}
+        </AnimatePresence>
       </div>
 
       <BottomNav />
