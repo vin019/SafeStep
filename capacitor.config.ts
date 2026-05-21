@@ -7,6 +7,9 @@ const config: CapacitorConfig = {
   server: {
     hostname: 'localhost',
     androidScheme: 'http'
+  },
+  android: {
+    path: '.'
   }
 };
 
